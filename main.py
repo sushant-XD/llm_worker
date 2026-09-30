@@ -41,9 +41,6 @@ def configure():
     if os.geteuid() != 0:
         raise RuntimeError("The LLM worker must be run as root.")
 
-    if not torch.cuda.is_available():
-        raise RuntimeError("No available GPU in the LLM container")
-
     control_token = os.getenv("CONTROL_TOKEN")
     if not control_token:
         raise RuntimeError("CONTROL_TOKEN is not set in environment")
@@ -77,6 +74,12 @@ def configure():
 
     with open(str(args.config), 'r') as file:
         Config.options = yaml.safe_load(file)
+
+    if (Config.options or {}).get("provider") == "openrouter":
+        if not os.getenv("OPENROUTER_API_KEY"):
+            raise RuntimeError("OPENROUTER_API_KEY is not set")
+    elif not torch.cuda.is_available():
+        raise RuntimeError("No available GPU in the LLM container")
 
     return control_token
 

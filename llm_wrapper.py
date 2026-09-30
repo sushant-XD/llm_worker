@@ -1,4 +1,5 @@
 import logging
+import os
 import torch
 from transformers import (
     AutoTokenizer, GenerationConfig,
@@ -9,10 +10,26 @@ from config import Config
 
 class LLMWrapper:
     def __init__(self):
+        self.client = None
+        if (Config.options or {}).get("provider") == "openrouter":
+            from openai import OpenAI
+            self.client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=os.environ["OPENROUTER_API_KEY"])
+            return
         self.model = AutoModelForCausalLM.from_pretrained(Config.model_str, torch_dtype=torch.bfloat16, device_map="auto")
         self.tokenizer = AutoTokenizer.from_pretrained(Config.model_str)
 
+    def _openrouter(self, prompt: str, temperature: float) -> str:
+        completion = self.client.chat.completions.create(
+            model=Config.model_str,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=temperature,
+            max_tokens=1024,
+        )
+        return (completion.choices[0].message.content or "").strip()
+
     def _generate_response(self, prompt: str) -> str:
+        if self.client:
+            return self._openrouter(prompt, 0)
         messages = [{"role": "user", "content": prompt}]
         formatted_prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         inputs = self.tokenizer(formatted_prompt, return_tensors="pt").to(self.model.device)
@@ -24,6 +41,8 @@ class LLMWrapper:
         return self.tokenizer.decode(newly_generated_tokens, skip_special_tokens=True).strip()
 
     def _generate_response_with_sampling(self, prompt: str) -> str:
+        if self.client:
+            return self._openrouter(prompt, 0.3)
         messages = [{"role": "user", "content": prompt}]
         formatted_prompt = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         inputs = self.tokenizer(formatted_prompt, return_tensors="pt").to(self.model.device)

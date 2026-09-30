@@ -3,6 +3,7 @@ import logging
 import secrets
 import sys
 import os
+import yaml
 from docker.types import DeviceRequest
 
 class llm_worker(WorkerThread):
@@ -19,12 +20,19 @@ class llm_worker(WorkerThread):
         self.config.image_name = "ghcr.io/oran-testing/llm_worker"
         self.cleanup_old_containers()
 
+        provider = self._llm_provider()
         self.config.container_env = {
             "CONFIG": self.config.config_file,
             "RESULTS_DIR": results_dir,
             "NVIDIA_VISIBLE_DEVICES": "all",
             "NVIDIA_DRIVER_CAPABILITIES": "all"
         }
+        if provider == "openrouter":
+            api_key = os.getenv("OPENROUTER_API_KEY")
+            if not api_key:
+                logging.critical("Failed to start llm_worker: OPENROUTER_API_KEY is not set")
+                sys.exit(1)
+            self.config.container_env["OPENROUTER_API_KEY"] = api_key
         self.setup_env()
         self.setup_networks()
 
@@ -33,15 +41,24 @@ class llm_worker(WorkerThread):
         self.config.container_volumes["/tmp/.rt_results"] = {"bind": "/host/logs/", "mode": "rw"}
         self.setup_volumes()
 
-        self.config.device_requests.append(
-            DeviceRequest(
-                count=-1,
-                capabilities=[["gpu"]],
-                driver="nvidia"
+        if provider != "openrouter":
+            self.config.device_requests.append(
+                DeviceRequest(
+                    count=-1,
+                    capabilities=[["gpu"]],
+                    driver="nvidia"
+                )
             )
-        )
 
         self.start_container()
+
+    def _llm_provider(self):
+        path = self.config.config_file
+        system_dir = os.getenv("DOCKER_SYSTEM_DIRECTORY") or ""
+        if system_dir and path.startswith(system_dir):
+            path = "/host" + path[len(system_dir):]
+        with open(path) as handle:
+            return (yaml.safe_load(handle) or {}).get("provider", "local")
 
     def get_token(self):
         return self.access_token
